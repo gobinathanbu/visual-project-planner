@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Task, GanttColumn, ContextMenuItem, TimelineUnit, GanttConfig, DependencyLine } from '../../types/gantt';
+import { Task, GanttColumn, ContextMenuItem, TimelineUnit, GanttConfig } from '../../types/gantt';
 import { 
   generateTestData, 
   flattenTasks, 
   calculateTaskPosition, 
   generateTimeline, 
-  isTaskEditable,
-  detectDependencyCycle 
+  isTaskEditable
 } from '../../utils/ganttUtils';
 import GanttGrid from './GanttGrid';
 import GanttTimeline from './GanttTimeline';
@@ -57,6 +56,9 @@ const GanttChart: React.FC = () => {
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [criticalPath, setCriticalPath] = useState<string[]>([]);
   const [zoomLevel, setZoomLevel] = useState(100);
+  const [timelineUnit, setTimelineUnit] = useState<'year' | 'month' | 'week' | 'day'>('month');
+  const [dependencyMode, setDependencyMode] = useState(false);
+  const [selectedForDependency, setSelectedForDependency] = useState<Task | null>(null);
   const [dragState, setDragState] = useState<{
     isDragging: boolean;
     task: Task | null;
@@ -80,11 +82,17 @@ const GanttChart: React.FC = () => {
     setTimeline(timelineUnits);
   }, [config.timelineUnitSize]);
 
-  // Update timeline when zoom changes
+  // Update timeline when zoom or unit changes
   useEffect(() => {
     const newUnitSize = (defaultConfig.timelineUnitSize * zoomLevel) / 100;
     setConfig(prev => ({ ...prev, timelineUnitSize: newUnitSize }));
-  }, [zoomLevel]);
+    
+    // Regenerate timeline based on unit
+    const startDate = new Date(2024, 0, 1);
+    const endDate = new Date(2024, 11, 31);
+    const timelineUnits = generateTimeline(startDate, endDate, newUnitSize);
+    setTimeline(timelineUnits);
+  }, [zoomLevel, timelineUnit]);
 
   // Flatten tasks when hierarchy changes
   useEffect(() => {
@@ -97,7 +105,7 @@ const GanttChart: React.FC = () => {
       // Simplified critical path calculation
       const path: string[] = [];
       flatTasks.forEach(task => {
-        if (task.Dependencies && task.Dependencies.length > 0 && task.level !== 0) {
+        if (task.Dependencies && task.level !== 0) {
           const totalDuration = task.Duration + (task.Dependencies.length * 2);
           if (totalDuration > 10) { // Threshold for critical path
             path.push(task.TaskID);
@@ -109,6 +117,11 @@ const GanttChart: React.FC = () => {
     
     calculateCriticalPath();
   }, [flatTasks]);
+
+  // Enhanced zoom controls with timeline unit
+  const handleTimelineUnitChange = useCallback((unit: 'year' | 'month' | 'week' | 'day') => {
+    setTimelineUnit(unit);
+  }, []);
 
   // Zoom controls
   const handleZoomIn = useCallback(() => {
@@ -273,7 +286,7 @@ const GanttChart: React.FC = () => {
       { text: 'Save', id: 'save', action: () => toast.success('Saved changes') },
       { text: 'Cancel', id: 'cancel', action: () => toast.info('Cancelled') }
     ];
-  }, [selectedTask]);
+  }, [selectedTask, handleEditTask, handleAddTask, handleDeleteTask, handleCollapseRow, handleExpandRow, handleDeleteDependency]);
 
   // Event handlers
   const handleToggleExpand = useCallback((taskId: string) => {
@@ -293,26 +306,40 @@ const GanttChart: React.FC = () => {
     });
   }, []);
 
+  // Enhanced taskbar click with dependency linking
   const handleTaskbarClick = useCallback((task: Task) => {
-    setSelectedTask(task);
-    toast.info(`Selected: ${task.TaskName}`);
-    
-    // Navigate to external URL example
-    if (task.ActivityNumber) {
-      console.log(`Navigate to activity: ${task.ActivityNumber}`);
+    if (dependencyMode) {
+      if (!selectedForDependency) {
+        setSelectedForDependency(task);
+        toast.info(`Select target task to create dependency from: ${task.TaskName}`);
+      } else if (selectedForDependency.TaskID !== task.TaskID) {
+        // Create dependency
+        const updatedTask = {
+          ...task,
+          Dependencies: [...(task.Dependencies || []), selectedForDependency.TaskID]
+        };
+        
+        handleSaveTask(updatedTask);
+        setSelectedForDependency(null);
+        setDependencyMode(false);
+        toast.success(`Dependency created: ${selectedForDependency.TaskName} → ${task.TaskName}`);
+      }
+    } else {
+      setSelectedTask(task);
+      toast.info(`Selected: ${task.TaskName}`);
     }
-  }, []);
+  }, [dependencyMode, selectedForDependency, handleSaveTask]);
 
-  const handleContextMenu = useCallback((e: React.MouseEvent, isHeader: boolean = false) => {
-    e.preventDefault();
-    const items = getContextMenuItems(isHeader);
-    setContextMenu({
-      visible: true,
-      x: e.clientX,
-      y: e.clientY,
-      items
-    });
-  }, [getContextMenuItems]);
+  // Toggle dependency creation mode
+  const handleToggleDependencyMode = useCallback(() => {
+    setDependencyMode(!dependencyMode);
+    setSelectedForDependency(null);
+    if (!dependencyMode) {
+      toast.info('Dependency mode enabled. Click source task, then target task.');
+    } else {
+      toast.info('Dependency mode disabled.');
+    }
+  }, [dependencyMode]);
 
   const handleAddTask = useCallback(() => {
     const newTask: Task = {
@@ -474,29 +501,17 @@ const GanttChart: React.FC = () => {
         <div className="flex items-center space-x-4">
           <h1 className="text-xl font-bold text-gray-800">Project Gantt Chart</h1>
           
-          {/* Zoom Controls */}
-          <div className="flex items-center space-x-2 border-l pl-4">
-            <button
-              className="p-2 hover:bg-gray-100 rounded"
-              onClick={handleZoomOut}
-              title="Zoom Out"
-            >
-              <ZoomOut size={18} />
-            </button>
-            <span className="text-sm font-medium min-w-12 text-center">{zoomLevel}%</span>
-            <button
-              className="p-2 hover:bg-gray-100 rounded"
-              onClick={handleZoomIn}
-              title="Zoom In"
-            >
-              <ZoomIn size={18} />
-            </button>
-            <button
-              className="px-3 py-1 text-sm hover:bg-gray-100 rounded"
-              onClick={handleZoomReset}
-            >
-              Reset
-            </button>
+          {/* Enhanced Zoom Controls */}
+          <div className="border-l pl-4">
+            <GanttZoomControls
+              zoomLevel={zoomLevel}
+              timelineUnit={timelineUnit}
+              onZoomChange={setZoomLevel}
+              onTimelineUnitChange={handleTimelineUnitChange}
+              onZoomIn={handleZoomIn}
+              onZoomOut={handleZoomOut}
+              onZoomReset={handleZoomReset}
+            />
           </div>
           
           {/* Action Buttons */}
@@ -509,6 +524,17 @@ const GanttChart: React.FC = () => {
               <span>Add Task</span>
             </button>
             <button
+              className={`flex items-center space-x-2 px-3 py-2 rounded ${
+                dependencyMode 
+                  ? 'bg-orange-500 text-white hover:bg-orange-600' 
+                  : 'bg-purple-500 text-white hover:bg-purple-600'
+              }`}
+              onClick={handleToggleDependencyMode}
+            >
+              <span>🔗</span>
+              <span>{dependencyMode ? 'Cancel Link' : 'Link Tasks'}</span>
+            </button>
+            <button
               className="flex items-center space-x-2 px-3 py-2 bg-green-500 text-white rounded hover:bg-green-600"
               onClick={handleExportToExcel}
             >
@@ -518,6 +544,7 @@ const GanttChart: React.FC = () => {
           </div>
         </div>
         
+        {/* Status Information */}
         <div className="flex items-center space-x-4">
           <div className="flex items-center space-x-2 text-sm text-gray-600">
             <Calendar size={16} />
@@ -526,6 +553,12 @@ const GanttChart: React.FC = () => {
           <div className="text-sm text-gray-600">
             Selected: {selectedTask?.TaskName || 'None'}
           </div>
+          {dependencyMode && selectedForDependency && (
+            <div className="flex items-center space-x-2 text-sm text-orange-600">
+              <div className="w-3 h-3 bg-orange-500 rounded-full"></div>
+              <span>Linking from: {selectedForDependency.TaskName}</span>
+            </div>
+          )}
           {criticalPath.length > 0 && (
             <div className="flex items-center space-x-2 text-sm text-red-600">
               <div className="w-3 h-3 bg-red-500 rounded-full"></div>
@@ -568,10 +601,28 @@ const GanttChart: React.FC = () => {
               <GanttTimeline
                 timeline={timeline}
                 scrollLeft={scrollLeft}
+                zoomLevel={timelineUnit}
               />
               
-              {/* Task bars container */}
+              {/* Task bars container with proper row alignment */}
               <div className="relative" style={{ width: timeline.length * config.timelineUnitSize }}>
+                {/* Row background stripes for alignment */}
+                {flatTasks.map((_, index) => (
+                  <div
+                    key={index}
+                    className={`absolute border-b border-gray-100 ${
+                      index % 2 === 0 ? 'bg-white' : 'bg-gray-25'
+                    }`}
+                    style={{
+                      top: index * config.rowHeight,
+                      height: config.rowHeight,
+                      left: 0,
+                      right: 0,
+                      width: '100%'
+                    }}
+                  />
+                ))}
+
                 {/* Weekend highlighting */}
                 {timeline.map((unit, index) => (
                   unit.isWeekend && (
@@ -594,11 +645,12 @@ const GanttChart: React.FC = () => {
                   const position = calculateTaskPosition(task, timelineStart, config.timelineUnitSize);
                   const isEditable = isTaskEditable(task, config.progressThreshold);
                   const isCritical = criticalPath.includes(task.TaskID);
+                  const isSelectedForDep = selectedForDependency?.TaskID === task.TaskID;
                   
                   return (
                     <div
                       key={task.TaskID}
-                      className="absolute"
+                      className={`absolute ${isSelectedForDep ? 'ring-2 ring-orange-400' : ''}`}
                       style={{
                         top: index * config.rowHeight,
                         height: config.rowHeight

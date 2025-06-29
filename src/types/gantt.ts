@@ -63,6 +63,7 @@ export interface GanttConfig {
   showBaseline: boolean;
   enableVirtualScrolling: boolean;
   progressThreshold: number;
+  timelineUnit?: 'year' | 'month' | 'week' | 'day';
 }
 
 export interface ResourceAssignment {
