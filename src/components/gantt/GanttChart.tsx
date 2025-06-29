@@ -16,6 +16,7 @@ import GanttZoomControls from './GanttZoomControls';
 import TaskEditDialog from './TaskEditDialog';
 import { toast } from 'sonner';
 import { ZoomIn, ZoomOut, Download, Plus, Calendar } from 'lucide-react';
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '../ui/resizable';
 
 const defaultConfig: GanttConfig = {
   timelineUnitSize: 70,
@@ -534,84 +535,93 @@ const GanttChart: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Gantt Container */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left Grid */}
-        <div 
-          className="w-1/3 overflow-auto"
-          onContextMenu={(e) => handleContextMenu(e, true)}
-        >
-          <GanttGrid
-            tasks={flatTasks}
-            columns={columns}
-            onToggleExpand={handleToggleExpand}
-            onCellClick={handleCellClick}
-            rowHeight={config.rowHeight}
-          />
-        </div>
+      {/* Main Gantt Container with Resizable Panels */}
+      <div className="flex-1 overflow-hidden">
+        <ResizablePanelGroup direction="horizontal">
+          {/* Left Grid Panel */}
+          <ResizablePanel defaultSize={35} minSize={25} maxSize={50}>
+            <div 
+              className="h-full overflow-auto"
+              onContextMenu={(e) => handleContextMenu(e, true)}
+            >
+              <GanttGrid
+                tasks={flatTasks}
+                columns={columns}
+                onToggleExpand={handleToggleExpand}
+                onCellClick={handleCellClick}
+                rowHeight={config.rowHeight}
+              />
+            </div>
+          </ResizablePanel>
 
-        {/* Right Timeline */}
-        <div 
-          className="flex-1 overflow-auto relative"
-          ref={ganttRef}
-          onContextMenu={(e) => handleContextMenu(e, false)}
-          onScroll={(e) => setScrollLeft(e.currentTarget.scrollLeft)}
-        >
-          <GanttTimeline
-            timeline={timeline}
-            scrollLeft={scrollLeft}
-          />
-          
-          {/* Task bars container */}
-          <div className="relative" style={{ width: timeline.length * config.timelineUnitSize }}>
-            {/* Weekend highlighting */}
-            {timeline.map((unit, index) => (
-              unit.isWeekend && (
-                <div
-                  key={index}
-                  className="absolute top-0 bottom-0 bg-red-50 opacity-50 pointer-events-none"
-                  style={{
-                    left: index * config.timelineUnitSize,
-                    width: config.timelineUnitSize
-                  }}
-                />
-              )
-            ))}
-            
-            {/* Dependency lines */}
-            {renderDependencyLines()}
-            
-            {/* Task bars */}
-            {flatTasks.map((task, index) => {
-              const position = calculateTaskPosition(task, timelineStart, config.timelineUnitSize);
-              const isEditable = isTaskEditable(task, config.progressThreshold);
-              const isCritical = criticalPath.includes(task.TaskID);
+          {/* Resizable Handle */}
+          <ResizableHandle withHandle />
+
+          {/* Right Timeline Panel */}
+          <ResizablePanel defaultSize={65}>
+            <div 
+              className="h-full overflow-auto relative"
+              ref={ganttRef}
+              onContextMenu={(e) => handleContextMenu(e, false)}
+              onScroll={(e) => setScrollLeft(e.currentTarget.scrollLeft)}
+            >
+              <GanttTimeline
+                timeline={timeline}
+                scrollLeft={scrollLeft}
+              />
               
-              return (
-                <div
-                  key={task.TaskID}
-                  className="absolute"
-                  style={{
-                    top: index * config.rowHeight,
-                    height: config.rowHeight
-                  }}
-                >
-                  <GanttTaskbar
-                    task={task}
-                    left={position.left}
-                    width={position.width}
-                    onTaskbarClick={handleTaskbarClick}
-                    onDragStart={handleDragStart}
-                    onDragEnd={handleDragEnd}
-                    showTooltip={true}
-                    isEditable={isEditable}
-                    isCritical={isCritical}
-                  />
-                </div>
-              );
-            })}
-          </div>
-        </div>
+              {/* Task bars container */}
+              <div className="relative" style={{ width: timeline.length * config.timelineUnitSize }}>
+                {/* Weekend highlighting */}
+                {timeline.map((unit, index) => (
+                  unit.isWeekend && (
+                    <div
+                      key={index}
+                      className="absolute top-0 bottom-0 bg-red-50 opacity-50 pointer-events-none"
+                      style={{
+                        left: index * config.timelineUnitSize,
+                        width: config.timelineUnitSize
+                      }}
+                    />
+                  )
+                ))}
+                
+                {/* Dependency lines */}
+                {renderDependencyLines()}
+                
+                {/* Task bars */}
+                {flatTasks.map((task, index) => {
+                  const position = calculateTaskPosition(task, timelineStart, config.timelineUnitSize);
+                  const isEditable = isTaskEditable(task, config.progressThreshold);
+                  const isCritical = criticalPath.includes(task.TaskID);
+                  
+                  return (
+                    <div
+                      key={task.TaskID}
+                      className="absolute"
+                      style={{
+                        top: index * config.rowHeight,
+                        height: config.rowHeight
+                      }}
+                    >
+                      <GanttTaskbar
+                        task={task}
+                        left={position.left}
+                        width={position.width}
+                        onTaskbarClick={handleTaskbarClick}
+                        onDragStart={handleDragStart}
+                        onDragEnd={handleDragEnd}
+                        showTooltip={true}
+                        isEditable={isEditable}
+                        isCritical={isCritical}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
 
       {/* Context Menu */}

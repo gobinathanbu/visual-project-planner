@@ -166,10 +166,10 @@ const GanttTaskbar: React.FC<GanttTaskbarProps> = ({
         </div>
       )}
 
-      {/* Enhanced Tooltip */}
+      {/* Enhanced Tooltip - Positioned Below Task Bar */}
       {showTaskTooltip && showTooltip && (
         <div className="absolute z-30 p-4 bg-gray-900 text-white text-sm rounded-lg shadow-xl whitespace-nowrap min-w-64"
-             style={{ top: '-120px', left: '50%', transform: 'translateX(-50%)' }}>
+             style={{ top: '50px', left: '50%', transform: 'translateX(-50%)' }}>
           <div className="space-y-2">
             <div className="font-semibold text-lg border-b border-gray-600 pb-2">{task.TaskName}</div>
             
@@ -226,7 +226,8 @@ const GanttTaskbar: React.FC<GanttTaskbarProps> = ({
             </div>
           )}
           
-          <div className="absolute top-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900" />
+          {/* Tooltip arrow pointing up */}
+          <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-b-4 border-transparent border-b-gray-900" />
         </div>
       )}
     </div>
