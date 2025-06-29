@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Task, GanttColumn, ContextMenuItem, TimelineUnit, GanttConfig, DependencyLine } from '../../types/gantt';
 import { 
@@ -13,7 +12,10 @@ import GanttGrid from './GanttGrid';
 import GanttTimeline from './GanttTimeline';
 import GanttTaskbar from './GanttTaskbar';
 import GanttContextMenu from './GanttContextMenu';
+import GanttZoomControls from './GanttZoomControls';
+import TaskEditDialog from './TaskEditDialog';
 import { toast } from 'sonner';
+import { ZoomIn, ZoomOut, Download, Plus, Calendar } from 'lucide-react';
 
 const defaultConfig: GanttConfig = {
   timelineUnitSize: 70,
@@ -39,7 +41,7 @@ const GanttChart: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [flatTasks, setFlatTasks] = useState<Task[]>([]);
   const [columns, setColumns] = useState<GanttColumn[]>(defaultColumns);
-  const [config] = useState<GanttConfig>(defaultConfig);
+  const [config, setConfig] = useState<GanttConfig>(defaultConfig);
   const [timeline, setTimeline] = useState<TimelineUnit[]>([]);
   const [contextMenu, setContextMenu] = useState<{
     visible: boolean;
@@ -50,19 +52,24 @@ const GanttChart: React.FC = () => {
   
   const [scrollLeft, setScrollLeft] = useState(0);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [criticalPath, setCriticalPath] = useState<string[]>([]);
+  const [zoomLevel, setZoomLevel] = useState(100);
   const [dragState, setDragState] = useState<{
     isDragging: boolean;
     task: Task | null;
     startX: number;
     originalStartDate: Date | null;
-  }>({ isDragging: false, task: null, startX: 0, originalStartDate: null });
+    mode: 'move' | 'resize-start' | 'resize-end' | 'dependency' | null;
+  }>({ isDragging: false, task: null, startX: 0, originalStartDate: null, mode: null });
   
   const ganttRef = useRef<HTMLDivElement>(null);
   const timelineContainerRef = useRef<HTMLDivElement>(null);
 
   // Initialize data
   useEffect(() => {
-    const testTasks = generateTestData(10, 3); // Reduced for demo
+    const testTasks = generateTestData(10, 3);
     setTasks(testTasks);
     
     // Generate timeline
@@ -72,10 +79,170 @@ const GanttChart: React.FC = () => {
     setTimeline(timelineUnits);
   }, [config.timelineUnitSize]);
 
+  // Update timeline when zoom changes
+  useEffect(() => {
+    const newUnitSize = (defaultConfig.timelineUnitSize * zoomLevel) / 100;
+    setConfig(prev => ({ ...prev, timelineUnitSize: newUnitSize }));
+  }, [zoomLevel]);
+
   // Flatten tasks when hierarchy changes
   useEffect(() => {
     setFlatTasks(flattenTasks(tasks));
   }, [tasks]);
+
+  // Calculate critical path
+  useEffect(() => {
+    const calculateCriticalPath = () => {
+      // Simplified critical path calculation
+      const path: string[] = [];
+      flatTasks.forEach(task => {
+        if (task.Dependencies && task.Dependencies.length > 0 && task.level !== 0) {
+          const totalDuration = task.Duration + (task.Dependencies.length * 2);
+          if (totalDuration > 10) { // Threshold for critical path
+            path.push(task.TaskID);
+          }
+        }
+      });
+      setCriticalPath(path);
+    };
+    
+    calculateCriticalPath();
+  }, [flatTasks]);
+
+  // Zoom controls
+  const handleZoomIn = useCallback(() => {
+    setZoomLevel(prev => Math.min(prev + 25, 200));
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    setZoomLevel(prev => Math.max(prev - 25, 50));
+  }, []);
+
+  const handleZoomReset = useCallback(() => {
+    setZoomLevel(100);
+  }, []);
+
+  // Task editing
+  const handleEditTask = useCallback((task: Task) => {
+    if (!isTaskEditable(task, config.progressThreshold)) {
+      toast.error(`Cannot edit task with ${task.Progress}% progress`);
+      return;
+    }
+    setEditingTask(task);
+    setShowEditDialog(true);
+  }, [config.progressThreshold]);
+
+  const handleSaveTask = useCallback((updatedTask: Task) => {
+    setTasks(prevTasks => {
+      const updateTask = (taskList: Task[]): Task[] => {
+        return taskList.map(task => {
+          if (task.TaskID === updatedTask.TaskID) {
+            return updatedTask;
+          }
+          if (task.children) {
+            return { ...task, children: updateTask(task.children) };
+          }
+          return task;
+        });
+      };
+      return updateTask(prevTasks);
+    });
+    
+    setShowEditDialog(false);
+    setEditingTask(null);
+    toast.success('Task updated successfully');
+  }, []);
+
+  // Enhanced drag functionality
+  const handleDragStart = useCallback((task: Task, e: React.MouseEvent, mode: 'move' | 'resize-start' | 'resize-end' | 'dependency' = 'move') => {
+    if (!isTaskEditable(task, config.progressThreshold)) {
+      toast.error(`Cannot edit task with ${task.Progress}% progress`);
+      return;
+    }
+    
+    setDragState({
+      isDragging: true,
+      task,
+      startX: e.clientX,
+      originalStartDate: new Date(task.StartDate),
+      mode
+    });
+  }, [config.progressThreshold]);
+
+  const handleDragEnd = useCallback((task: Task, e: React.MouseEvent) => {
+    if (!dragState.isDragging || !dragState.originalStartDate) return;
+    
+    const deltaX = e.clientX - dragState.startX;
+    const daysDelta = Math.round(deltaX / (config.timelineUnitSize / 7));
+    
+    if (daysDelta !== 0) {
+      let newStartDate = new Date(dragState.originalStartDate);
+      let newEndDate = new Date(task.EndDate);
+      
+      switch (dragState.mode) {
+        case 'move':
+          newStartDate.setDate(newStartDate.getDate() + daysDelta);
+          newEndDate.setDate(newEndDate.getDate() + daysDelta);
+          break;
+        case 'resize-start':
+          newStartDate.setDate(newStartDate.getDate() + daysDelta);
+          break;
+        case 'resize-end':
+          newEndDate.setDate(newEndDate.getDate() + daysDelta);
+          break;
+      }
+      
+      // Update task dates
+      setTasks(prevTasks => {
+        const updateTaskDates = (taskList: Task[]): Task[] => {
+          return taskList.map(t => {
+            if (t.TaskID === task.TaskID) {
+              const duration = Math.ceil((newEndDate.getTime() - newStartDate.getTime()) / (24 * 60 * 60 * 1000));
+              return { ...t, StartDate: newStartDate, EndDate: newEndDate, Duration: duration };
+            }
+            if (t.children) {
+              return { ...t, children: updateTaskDates(t.children) };
+            }
+            return t;
+          });
+        };
+        return updateTaskDates(prevTasks);
+      });
+      
+      toast.success(`Task ${dragState.mode === 'move' ? 'moved' : 'resized'} successfully`);
+    }
+    
+    setDragState({ isDragging: false, task: null, startX: 0, originalStartDate: null, mode: null });
+  }, [dragState, config.timelineUnitSize]);
+
+  // Export functionality
+  const handleExportToExcel = useCallback(() => {
+    // Create CSV data
+    const headers = columns.filter(col => col.visible).map(col => col.headerText);
+    const csvContent = [
+      headers.join(','),
+      ...flatTasks.map(task => 
+        columns.filter(col => col.visible).map(col => {
+          const value = task[col.field];
+          if (value instanceof Date) {
+            return value.toLocaleDateString();
+          }
+          return String(value || '');
+        }).join(',')
+      )
+    ].join('\n');
+    
+    // Download CSV
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'gantt-chart.csv';
+    a.click();
+    window.URL.revokeObjectURL(url);
+    
+    toast.success('Gantt chart exported to CSV');
+  }, [flatTasks, columns]);
 
   // Context menu items
   const getContextMenuItems = useCallback((isHeader: boolean = false): ContextMenuItem[] => {
@@ -92,6 +259,7 @@ const GanttChart: React.FC = () => {
     
     return [
       { text: 'Add Task', id: 'add', action: () => handleAddTask() },
+      { text: 'Edit Task', id: 'edit', action: () => selectedTask && handleEditTask(selectedTask) },
       { text: 'Delete Task', id: 'delete', action: () => handleDeleteTask() },
       { separator: true, text: '', id: 'sep1' },
       { text: 'Link Activity from other plan', id: 'linkActivity', action: () => toast.info('Link activity from other plan') },
@@ -104,7 +272,7 @@ const GanttChart: React.FC = () => {
       { text: 'Save', id: 'save', action: () => toast.success('Saved changes') },
       { text: 'Cancel', id: 'cancel', action: () => toast.info('Cancelled') }
     ];
-  }, []);
+  }, [selectedTask]);
 
   // Event handlers
   const handleToggleExpand = useCallback((taskId: string) => {
@@ -133,55 +301,6 @@ const GanttChart: React.FC = () => {
       console.log(`Navigate to activity: ${task.ActivityNumber}`);
     }
   }, []);
-
-  const handleDragStart = useCallback((task: Task, e: React.MouseEvent) => {
-    if (!isTaskEditable(task, config.progressThreshold)) {
-      toast.error(`Cannot edit task with ${task.Progress}% progress`);
-      return;
-    }
-    
-    setDragState({
-      isDragging: true,
-      task,
-      startX: e.clientX,
-      originalStartDate: new Date(task.StartDate)
-    });
-  }, [config.progressThreshold]);
-
-  const handleDragEnd = useCallback((task: Task, e: React.MouseEvent) => {
-    if (!dragState.isDragging || !dragState.originalStartDate) return;
-    
-    const deltaX = e.clientX - dragState.startX;
-    const daysDelta = Math.round(deltaX / (config.timelineUnitSize / 7));
-    
-    if (daysDelta !== 0) {
-      const newStartDate = new Date(dragState.originalStartDate);
-      newStartDate.setDate(newStartDate.getDate() + daysDelta);
-      
-      const newEndDate = new Date(task.EndDate);
-      newEndDate.setDate(newEndDate.getDate() + daysDelta);
-      
-      // Update task dates
-      setTasks(prevTasks => {
-        const updateTaskDates = (taskList: Task[]): Task[] => {
-          return taskList.map(t => {
-            if (t.TaskID === task.TaskID) {
-              return { ...t, StartDate: newStartDate, EndDate: newEndDate };
-            }
-            if (t.children) {
-              return { ...t, children: updateTaskDates(t.children) };
-            }
-            return t;
-          });
-        };
-        return updateTaskDates(prevTasks);
-      });
-      
-      toast.success(`Task dates updated`);
-    }
-    
-    setDragState({ isDragging: false, task: null, startX: 0, originalStartDate: null });
-  }, [dragState, config.timelineUnitSize]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent, isHeader: boolean = false) => {
     e.preventDefault();
@@ -289,7 +408,7 @@ const GanttChart: React.FC = () => {
   // Calculate timeline start date
   const timelineStart = useMemo(() => timeline[0]?.date || new Date(), [timeline]);
 
-  // Render dependency lines (simplified for demo)
+  // Enhanced dependency line rendering
   const renderDependencyLines = useCallback(() => {
     const lines: JSX.Element[] = [];
     
@@ -303,6 +422,8 @@ const GanttChart: React.FC = () => {
             
             const fromY = (flatTasks.indexOf(depTask) * config.rowHeight) + (config.rowHeight / 2);
             const toY = (index * config.rowHeight) + (config.rowHeight / 2);
+            
+            const isCritical = criticalPath.includes(task.TaskID) && criticalPath.includes(depId);
             
             lines.push(
               <svg
@@ -318,8 +439,8 @@ const GanttChart: React.FC = () => {
                 <path
                   d={`M 0 ${fromY <= toY ? 0 : Math.abs(toY - fromY)} 
                       L ${Math.abs(toPos.left - (fromPos.left + fromPos.width)) - 10} ${fromY <= toY ? Math.abs(toY - fromY) : 0}`}
-                  stroke="#666"
-                  strokeWidth="2"
+                  stroke={isCritical ? "#ef4444" : "#666"}
+                  strokeWidth={isCritical ? "3" : "2"}
                   fill="none"
                   markerEnd="url(#arrowhead)"
                 />
@@ -332,7 +453,7 @@ const GanttChart: React.FC = () => {
                     refY="3.5"
                     orient="auto"
                   >
-                    <polygon points="0 0, 10 3.5, 0 7" fill="#666" />
+                    <polygon points="0 0, 10 3.5, 0 7" fill={isCritical ? "#ef4444" : "#666"} />
                   </marker>
                 </defs>
               </svg>
@@ -343,32 +464,73 @@ const GanttChart: React.FC = () => {
     });
     
     return lines;
-  }, [flatTasks, timelineStart, config]);
+  }, [flatTasks, timelineStart, config, criticalPath]);
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
-      {/* Toolbar */}
+      {/* Enhanced Toolbar */}
       <div className="bg-white border-b border-gray-300 p-4 flex items-center justify-between">
         <div className="flex items-center space-x-4">
-          <h1 className="text-xl font-bold text-gray-800">Custom Gantt Chart</h1>
-          <button
-            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-            onClick={() => toast.success('Excel export started')}
-          >
-            Export to Excel
-          </button>
-          <button
-            className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
-            onClick={() => setTasks(generateTestData(10, 3))}
-          >
-            Regenerate Data
-          </button>
+          <h1 className="text-xl font-bold text-gray-800">Project Gantt Chart</h1>
+          
+          {/* Zoom Controls */}
+          <div className="flex items-center space-x-2 border-l pl-4">
+            <button
+              className="p-2 hover:bg-gray-100 rounded"
+              onClick={handleZoomOut}
+              title="Zoom Out"
+            >
+              <ZoomOut size={18} />
+            </button>
+            <span className="text-sm font-medium min-w-12 text-center">{zoomLevel}%</span>
+            <button
+              className="p-2 hover:bg-gray-100 rounded"
+              onClick={handleZoomIn}
+              title="Zoom In"
+            >
+              <ZoomIn size={18} />
+            </button>
+            <button
+              className="px-3 py-1 text-sm hover:bg-gray-100 rounded"
+              onClick={handleZoomReset}
+            >
+              Reset
+            </button>
+          </div>
+          
+          {/* Action Buttons */}
+          <div className="flex items-center space-x-2 border-l pl-4">
+            <button
+              className="flex items-center space-x-2 px-3 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+              onClick={handleAddTask}
+            >
+              <Plus size={16} />
+              <span>Add Task</span>
+            </button>
+            <button
+              className="flex items-center space-x-2 px-3 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+              onClick={handleExportToExcel}
+            >
+              <Download size={16} />
+              <span>Export</span>
+            </button>
+          </div>
         </div>
         
         <div className="flex items-center space-x-4">
-          <span className="text-sm text-gray-600">
-            Tasks: {flatTasks.length} | Selected: {selectedTask?.TaskName || 'None'}
-          </span>
+          <div className="flex items-center space-x-2 text-sm text-gray-600">
+            <Calendar size={16} />
+            <span>Tasks: {flatTasks.length}</span>
+          </div>
+          <div className="text-sm text-gray-600">
+            Selected: {selectedTask?.TaskName || 'None'}
+          </div>
+          {criticalPath.length > 0 && (
+            <div className="flex items-center space-x-2 text-sm text-red-600">
+              <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+              <span>Critical Path: {criticalPath.length} tasks</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -423,6 +585,7 @@ const GanttChart: React.FC = () => {
             {flatTasks.map((task, index) => {
               const position = calculateTaskPosition(task, timelineStart, config.timelineUnitSize);
               const isEditable = isTaskEditable(task, config.progressThreshold);
+              const isCritical = criticalPath.includes(task.TaskID);
               
               return (
                 <div
@@ -442,6 +605,7 @@ const GanttChart: React.FC = () => {
                     onDragEnd={handleDragEnd}
                     showTooltip={true}
                     isEditable={isEditable}
+                    isCritical={isCritical}
                   />
                 </div>
               );
@@ -458,6 +622,18 @@ const GanttChart: React.FC = () => {
         onClose={() => setContextMenu(prev => ({ ...prev, visible: false }))}
         items={contextMenu.items}
       />
+
+      {/* Task Edit Dialog */}
+      {showEditDialog && editingTask && (
+        <TaskEditDialog
+          task={editingTask}
+          onSave={handleSaveTask}
+          onCancel={() => {
+            setShowEditDialog(false);
+            setEditingTask(null);
+          }}
+        />
+      )}
     </div>
   );
 };

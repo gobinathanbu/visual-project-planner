@@ -1,4 +1,3 @@
-
 export interface VSNDetail {
   VSNCode: string;
   VSNName: string;
@@ -23,6 +22,8 @@ export interface Task {
   children?: Task[];
   expanded?: boolean;
   level?: number;
+  resources?: string[];
+  status?: 'not-started' | 'in-progress' | 'completed' | 'delayed';
 }
 
 export interface DependencyLine {
@@ -62,4 +63,17 @@ export interface GanttConfig {
   showBaseline: boolean;
   enableVirtualScrolling: boolean;
   progressThreshold: number;
+}
+
+export interface ResourceAssignment {
+  taskId: string;
+  resourceId: string;
+  resourceName: string;
+  allocation: number; // percentage
+}
+
+export interface CriticalPathOptions {
+  highlightColor: string;
+  showSlack: boolean;
+  calculateFloat: boolean;
 }
